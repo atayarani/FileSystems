@@ -1,0 +1,202 @@
+#!/usr/bin/env python
+from filers.globalfs import Gfs
+from filers.isilon import Isilon
+from filers.netapp import NetApp
+from filers.thumper import Thumper
+from filers.toro import Toro
+from filers.vnetapp import vNetApp
+from filers.fspkg import *
+from MySQLdb import *
+from sys import exit,stderr
+
+class NoPlatform(Exception):
+    pass
+
+class Database(object):
+    def __init__(self):
+        self.conn=connect()
+        self.curs=self.conn.cursor()
+
+    def dbdict(self):
+        sqlcode='''SELECT filer,mount,nfs,cifs from fstab'''
+        self.curs.execute(sqlcode)
+        _localdict=defaultdict(defaultdict)
+        rows=self.curs.fetchall()
+        
+        for row in rows:
+            (host,mount,nfs,cifs)=row
+            _localdict[host][mount]=[nfs,cifs]
+
+        return _localdict
+
+    def comparedict(self,_localdict,_dbdict):
+        _locallist=[]
+        _outdict={}
+
+        try:
+            for key in _localdict:
+                if key not in _dbdict:
+                   for value in _localdict[key]:
+                       if "Insert" not in _outdict: _outdict["Insert"]=[]
+                       nfs,cifs=_localdict[key][value]
+                       _outlist=[key,value,nfs,cifs]
+
+                       _outdict["Insert"].extend([_outlist])
+                   continue
+                for value in _localdict[key]:
+                    nfs,cifs=_localdict[key][value]
+                    _outlist=[key,value,nfs,cifs]
+                    if value not in _dbdict[key]:
+                       if "Insert" not in _outdict: _outdict["Insert"]=[]
+                       _outdict["Insert"].extend([_outlist])
+                    elif _localdict[key][value] not in _dbdict[key][value]:
+                       nfs,cifs=_localdict[key][value]
+                       _outlist=[key,value,nfs,cifs]
+                       if "Update" not in _outdict: _outdict["Update"]=[]
+                       try:
+                           if _outlist not in _outdict["Update"].values():
+                               _outdict["Update"].extend([_outlist])
+                       except AttributeError,e:
+                           if _outlist not in _outdict["Update"]:
+                               _outdict["Update"].extend([_outlist])
+                       finally:
+                           _outdict["Update"].extend([_outlist])
+
+        except KeyError, e:
+            print "Error: %s" % e
+
+        try:
+            for key in _dbdict:
+                if key not in _localdict:
+                    for value in _dbdict[key]:
+                       if "Delete" not in _outdict: _outdict["Delete"]=[]
+                       nfs,cifs=_dbdict[key][value]
+                       _outlist=[key,value,nfs,cifs]
+
+                       _outdict["Delete"].extend([_outlist])
+                    continue
+                for value in _dbdict[key]:
+                    if value not in _localdict[key]:
+                       if "Delete" not in _outdict: _outdict["Delete"]=[]
+                       nfs,cifs=_dbdict[key][value]
+
+                    elif _dbdict[key][value] not in _localdict[key][value]:
+                       nfs,cifs=_localdict[key][value]
+                       _outlist=[key,value,nfs,cifs]
+                       if "Update" not in _outdict: _outdict["Update"]=[]
+                       try:
+                           if _outlist not in _outdict["Update"].values():
+                               _outdict["Update"].extend([_outlist])
+                       except AttributeError,e:
+                           if _outlist not in _outdict["Update"]:
+                               _outdict["Update"].extend([_outlist])
+                       finally:
+                           _outdict["Update"].extend([_outlist])
+                       
+        except KeyError, e:
+            print "Error: %s" % e
+        except Exception, e:
+            print "Well, that was truly unexpected: %s" % e
+
+        return _outdict
+
+    def createtable(self):
+        self.curs.execute('''CREATE TABLE fstab
+                             (
+                             id SMALLINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                             filer VARCHAR(30) NOT NULL,
+                             filertype VARCHAR(30) NOT NULL,
+                             mount VARCHAR(255) NOT NULL,
+                             nfs VARCHAR(255),
+                             cifs VARCHAR(60),
+                             PRIMARY KEY (id)
+                             ) ENGINE=InnoDB;''')
+                    
+    def getfilertype(self,host):
+        if host in Isilon().hostlist:
+            return "isilon"
+        elif host in NetApp().hostlist:
+            return "netapp"
+        elif host in Thumper().hostlist:
+            return "thumper"
+        elif host in Toro().hostlist:
+            return "toro"
+        elif host in vNetApp().hostdict.values():
+            return 'vnetapp'
+        else:
+            return "NaP" #Not a Platform
+
+    def generatesql(self,_action,_filertype,fields):
+        (host,mount,nfs,cifs)=fields
+
+        if _filertype is 'NaP': _action = 'Delete'
+
+        try:
+            if _action is "Insert":
+                self.curs.execute("""INSERT INTO fstab (filer,filertype,mount,nfs,cifs) 
+                      VALUES (%s, %s, %s, %s,
+                      %s)""",(host,_filertype,mount,nfs,cifs))
+            elif _action is "Update":
+                self.curs.execute("""UPDATE fstab SET nfs=%s,cifs=%s WHERE filer=%s and
+                      mount=%s""",(nfs,cifs,host,mount))
+            elif _action is "Delete":
+                self.curs.execute("""DELETE FROM fstab 
+                      WHERE filer=%s and mount=%s""",(host,mount))
+            else:
+                return
+        except Exception,e:
+            print >>stderr, "Error:",e
+            self.conn.rollback()
+            exit(1)
+
+    def uniquelist(self,seq): 
+        keys = {} 
+        for e in seq: 
+            keys[e] = 1 
+        return keys.keys()
+
+    def droptable(self):
+        """This function is to be used for debugging or as a last resort"""
+        """Unless you wrote this script, you should not use this function"""
+        self.curs.execute("""DROP TABLE fstab""")
+
+    def finish(self):
+        self.conn.commit()
+        self.conn.close()
+        exit(0)
+
+isilon=Isilon().prepdict()
+netapp=NetApp().prepdict()
+thumper=Thumper().prepdict()
+toro=Toro().prepdict()
+vnetapp=vNetApp().prepdict()
+
+database=Database()
+#try:
+#    database.createtable()
+#except OperationalError, e:
+#    print >>stderr, "Error:",e
+
+datadict=database.dbdict()
+
+outdict=defaultdict(defaultdict)
+outdict.update(isilon)
+outdict.update(netapp)
+outdict.update(thumper)
+outdict.update(toro)
+outdict.update(vnetapp)
+
+#database.createtable()
+
+actiondict={}
+actiondict.update(database.comparedict(outdict,datadict))
+
+outlist=[]
+
+for k,v in actiondict.items():
+    for item in v:
+        filertype=database.getfilertype(item[0])
+        if filertype is "NaP": continue
+        database.generatesql(k,filertype,item)
+
+database.finish()
