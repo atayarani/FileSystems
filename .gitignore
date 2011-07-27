@@ -1,5 +1,6 @@
 *.core
 *.php
 *.pyc
+*.pyo
 gethosts.py
 filesystems.py
