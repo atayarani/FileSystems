@@ -1,0 +1,43 @@
+#!/usr/local/bin/python
+'''Module to define the gethosts methods'''
+from fspkg import *
+from globalfs import Gfs
+
+class GetHosts(object):
+    def __init__(self,__ftype):
+        if __ftype == 'isilon':
+            self.hosts=self.__isilons()
+        elif __ftype == 'netapp':
+            self.hosts=self.__netapps()
+        elif __ftype == 'thumper':
+            self.hosts=self.__thumpers()
+        elif __ftype == 'toro':
+            self.hosts=self.__toros()
+        elif __ftype == 'vnetapp':
+            self.hosts=self.__vnetapps()
+
+    def __isilons(self):
+        local_list=[]
+
+        return local_list
+
+    def __netapps(self):
+        local_list=[]
+
+        return local_list
+
+    def __toros(self):
+        locallist=[]
+
+        return locallist
+
+    def __thumpers(self):
+        local_list=[]
+        
+        return local_list
+
+
+    def __vnetapps(self):
+        local_dict={}
+
+        return local_dict
